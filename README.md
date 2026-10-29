@@ -1,125 +1,196 @@
-# ip_app — the same app in 4 languages
+# IP App — Python FastAPI
 
-Each app returns the IP address of the machine (or container) it runs on, plus a `/greet` message.
-Use it to compare build tools across languages, then run all of them in Docker.
+Returns the IP address of the machine (or container) it runs on.
+Language: **Python 3.12** · Framework: **FastAPI** · Build tool: **pip + venv** · Port: **8000**
 
-| Folder | Language | Build tool | What "build" means | Manual run | Docker port |
-|--------|----------|-----------|--------------------|-----------|-------------|
-| [`fast_api/`](fast_api/README.md) | Python 3.12 (FastAPI) | pip + venv | Install libraries from `requirements.txt` | `localhost:8000` | `8080` |
-| [`flask/`](flask/README.md) | Python 3.12 (Flask) | pip + venv | Install libraries from `requirements.txt` | `localhost:8000` | `8081` |
-| [`nodejs/`](nodejs/README.md) | Node.js 24 (Express) | npm | Install libraries from `package.json` into `node_modules/` | `localhost:8000` | `8082` |
-| [`golang/`](golang/README.md) | Go | go | **Compile** into one program file (`ip-app`) | `localhost:8000` | `8083` |
+| URL | Returns |
+|-----|---------|
+| `http://localhost:8000/` | `{"ip":"172.20.0.2","message":"The IP address is: 172.20.0.2"}` |
+| `http://localhost:8000/greet` | `{"message":"Hi how are you"}` |
+| `http://localhost:8000/docs` | Swagger UI — try the API in the browser |
 
-Every folder README has: install commands (Ubuntu + Windows), build, run, test, clean up, and Docker.
-All apps listen on port **8000** when run by hand — run one at a time. Docker maps them to 8080-8083 so all four run together.
-
-**Switch to the next app: stop whatever is running on port 8000**
-
-Press **Control-C** in the terminal where the app runs. If that terminal is closed or the app is in the background:
-
-Ubuntu
-```bash
-fuser -k 8000/tcp
-```
-Mac
-```bash
-kill $(lsof -ti :8000)
-```
-Windows (PowerShell)
-```powershell
-Get-NetTCPConnection -LocalPort 8000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
-```
-See what is using the port first (optional): Ubuntu `sudo ss -ltnp 'sport = :8000'`, Mac `lsof -i :8000`,
-Windows `Get-NetTCPConnection -LocalPort 8000`. If you started the app with `sudo`, add `sudo` to the stop command.
-
-**Build tools side by side**
-
-| | Python | Node.js | Go | Java (Maven, for comparison) |
-|-|--------|---------|----|------------------------------|
-| Dependency file | `requirements.txt` | `package.json` | `go.mod` | `pom.xml` |
-| Install dependencies | `pip install -r requirements.txt` | `npm install` | `go mod download` | `mvn dependency:resolve` |
-| Where they go | `.venv/` | `node_modules/` | Go module cache | `~/.m2/` |
-| Build output | none (runs the `.py` files) | none (runs the `.js` files) | one binary file | `.jar` / `.war` file |
-| Run | `python app.py` / `fastapi run` | `npm start` | `./ip-app` | `java -jar` / Tomcat |
-| Needs the language on the server? | Yes | Yes | **No** | Yes (Java) |
-
-**Tests and CI/CD side by side** (details in each folder's README)
-
-| | Python (FastAPI / Flask) | Node.js | Go |
-|-|--------------------------|---------|----|
-| Lint | `ruff` | `ESLint` | `gofmt` + `go vet` |
-| Unit tests | `pytest` | `Jest` + `supertest` | `go test` (built in) |
-| Fake the IP in tests | `monkeypatch` | `jest.spyOn` | replaceable variable |
-| Coverage gate (80%) | `pytest-cov` | Jest `coverageThreshold` | `go tool cover` |
-| Security scan | `pip-audit` | `npm audit` | `govulncheck` |
-| Integration tests | `pytest` + HTTP client | `Jest` + `fetch` | `go test -tags=integration` |
-| Test tools listed in | `requirements-dev.txt` | `devDependencies` | none needed |
-| Jenkinsfile | `fast_api/Jenkinsfile`, `flask/Jenkinsfile` | `nodejs/Jenkinsfile` | `golang/Jenkinsfile` |
-| Dev deploy port | 9080 / 9081 | 9082 | 9083 |
-
-Every Jenkinsfile has the same stages: **Checkout -> Install -> Lint -> Unit Test -> Security Scan -> Build Image ->
-Container Test -> Push Image (optional) -> Deploy (dev)**. Only the commands change per language.
+**Build tool in simple points**
+- Python is not compiled to a file — the "build" is installing the dependencies.
+- `requirements.txt` = list of libraries (like `pom.xml` in Maven, `package.json` in Node.js).
+- `pip` = downloads and installs the libraries.
+- `venv` = a private folder (`.venv/`) with Python + libraries only for this project, so projects do not clash.
 
 ---
 
-## Docker (later)
+## 1. Install (one time)
 
-### Install Docker
-
-**Ubuntu**
+### Ubuntu
 ```bash
-curl -fsSL https://get.docker.com | sudo sh
-sudo usermod -aG docker $USER
-newgrp docker
-docker version
-docker compose version
+sudo apt update
+sudo apt install -y python3 python3-venv python3-pip git curl
+python3 --version
+```
+Any Python 3.12 or newer works (Ubuntu 24.04 has 3.12, Ubuntu 26.04 has 3.14). The Docker image uses 3.12.
+
+### Windows (PowerShell)
+**Package manager — winget** (built into Windows 10/11). Check it:
+```powershell
+winget --version
+```
+Only if `winget` is not found — open PowerShell **as Administrator** and run:
+```powershell
+Install-PackageProvider -Name NuGet -Force | Out-Null
+Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
+Repair-WinGetPackageManager -AllUsers
+```
+Install Python and Git, allow venv scripts, reload PATH:
+```powershell
+winget install -e --id Python.Python.3.12 --accept-source-agreements --accept-package-agreements
+winget install -e --id Git.Git --accept-source-agreements --accept-package-agreements
+Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force
+$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')
+py -3.12 --version
 ```
 
-**Windows (PowerShell)** — check winget first: `winget --version` (to install winget, see any folder README).
-```powershell
-winget install -e --id Docker.DockerDesktop --accept-source-agreements --accept-package-agreements
-```
-Restart Windows, start **Docker Desktop** once (it sets up WSL 2), then check in a new PowerShell:
-```powershell
-docker version
-docker compose version
-```
-
-### Run all four apps
+## 2. Get the code
 ```bash
 git clone https://github.com/itdefined-org-apps/ip_app.git
-cd ip_app
-docker compose up -d --build
-docker compose ps
+cd ip_app/fast_api
 ```
-Test (Windows: use `curl.exe` instead of `curl`):
+(Already cloned: `cd ip_app && git pull && cd fast_api`)
+
+## 3. Build and run
+
+### Ubuntu
 ```bash
-curl http://localhost:8080/      # FastAPI
-curl http://localhost:8081/      # Flask
-curl http://localhost:8082/      # Node.js
-curl http://localhost:8083/      # Go
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+fastapi run app.py --host 0.0.0.0 --port 8000
 ```
-Each one shows its **container's** IP (e.g. `172.19.0.2`) — every container gets its own IP on the Docker network.
 
-**On a server that also runs Tomcat or Jenkins** (they use port 8080), FastAPI fails with
-`failed to bind host port 0.0.0.0:8080/tcp: address already in use`. Either stop Tomcat during the Docker demo
-(`sudo systemctl stop tomcat10`), or change FastAPI's port in `docker-compose.yml` from `"8080:8000"` to `"8084:8000"`.
+### Windows (PowerShell)
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+fastapi run app.py --host 0.0.0.0 --port 8000
+```
+You should see: `Uvicorn running on http://0.0.0.0:8000`. Leave it running. The prompt starts with `(.venv)` while the venv is active.
+Development mode with auto-reload when you edit `app.py`: `fastapi dev app.py`.
 
-**Disk space:** building all four images needs about **2 GB free** (`df -h /`). On a small EC2 disk, free space afterwards with
-`docker builder prune -af` (removes the build cache, keeps the images).
+## 4. Test (in a second terminal)
 
+### Ubuntu
 ```bash
-docker compose logs -f golang    # logs of one app (Control-C to stop following)
-docker compose down              # stop and remove all containers
-docker images                    # compare image sizes: Go ~22 MB, Python/Node 210-320 MB
+curl http://localhost:8000/
+curl http://localhost:8000/greet
 ```
 
-### What `docker-compose.yml` shows
-- `build: context:` — builds each image from its folder's `Dockerfile`.
-- `ports: "8080:8000"` — your machine's port -> the container's port.
-- `fastapi_backend` also shows `environment` variables, a custom `networks` entry and a named `volumes` entry.
-- The named volume `fastapi_data` is mounted on `/app`. Docker copies the image's code into it only the **first** time;
-  after you change `app.py` and rebuild, run `docker compose down -v` (deletes the volume) so the new code is used.
+### Windows (PowerShell)
+```powershell
+curl.exe http://localhost:8000/
+curl.exe http://localhost:8000/greet
+```
+You should see the JSON from the table at the top. Also open `http://localhost:8000/docs` in a browser.
+On a server (EC2), use `http://<server-public-ip>:8000/` and open port 8000 in the security group.
 
-## Repository files
-- `.gitignore` keeps build and test output out of Git: `.venv/`, `node_modules/`, `reports/`, the Go binary.
+## 5. Stop and clean up
+Press **Control-C** in the first terminal, then:
+```bash
+deactivate          # leave the venv
+rm -rf .venv        # Ubuntu: delete the venv (Windows: Remove-Item -Recurse -Force .venv)
+```
+
+---
+
+## 6. Docker (later)
+Same commands on Ubuntu and Windows (Docker installation: see the main [README](../README.md)).
+```bash
+docker build -t fastapi:latest .
+docker run -d --name fast_api -p 8080:8000 fastapi:latest
+curl http://localhost:8080/          # Windows: curl.exe http://localhost:8080/
+docker logs fast_api
+docker stop fast_api && docker rm fast_api
+```
+- `-p 8080:8000` = port 8080 on your machine -> port 8000 in the container.
+- The IP shown is the **container's** IP (e.g. `172.17.0.2`), not your machine's.
+- To run all four apps together: `docker compose up -d --build` in the `ip_app` folder.
+
+## Tests (as in a real project)
+
+| Check | Tool | Where | Needs |
+|-------|------|-------|-------|
+| Lint | ruff | all code | nothing |
+| Unit tests | pytest + FastAPI `TestClient` | `tests/unit` / `*_test.go` | nothing — the IP lookup is replaced with `monkeypatch`, so the result is always `10.1.2.3` |
+| Coverage gate | built into the test tool | — | fails below **80%** (now 100%) |
+| Security scan | pip-audit | dependencies | internet |
+| Integration tests | pytest + httpx | `tests/integration` / `integration_test.go` | the app running (`BASE_URL`) |
+
+- `requirements.txt` = what the **app** needs (goes into the Docker image).
+- `requirements-dev.txt` = app + **test tools** (pytest, ruff, pip-audit) — only for developers and Jenkins.
+- `pyproject.toml` = pytest and ruff settings.
+
+### Run lint, unit tests and security scan
+### Ubuntu
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+ruff check . && ruff format --check .                        # Lint
+pytest --cov=app --cov-report=term-missing --cov-fail-under=80   # Unit tests + coverage
+pip-audit -r requirements.txt                                # Security scan
+```
+
+### Windows (PowerShell)
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
+ruff check .; ruff format --check .
+pytest --cov=app --cov-report=term-missing --cov-fail-under=80
+pip-audit -r requirements.txt
+```
+
+Lint fails? Fix most problems automatically: `ruff check --fix . && ruff format .`.
+
+### Run the integration tests
+Start the app in terminal 1 (`fastapi run app.py --port 8000`), then in terminal 2:
+```bash
+BASE_URL=http://localhost:8000 pytest tests/integration
+```
+Windows (PowerShell): `$env:BASE_URL='http://localhost:8000'; pytest tests/integration`
+
+Unit tests: **5**, integration tests: **3**.
+
+## CI/CD with Jenkins
+`Jenkinsfile` in this folder runs the same checks, then builds, tests and deploys the Docker image:
+
+| # | Stage | What happens | Fails when |
+|---|-------|--------------|------------|
+| 1 | Checkout | Gets the code | - |
+| 2 | Install | Installs app + test tools | Download error |
+| 3 | Lint | ruff | Style or code problem |
+| 4 | Unit Test | Unit tests + coverage report | A test fails or coverage < 80% |
+| 5 | Security Scan | pip-audit | A dependency has a known vulnerability |
+| 6 | Build Image | `docker build -t fastapi:<build-number>` | Dockerfile error |
+| 7 | Container Test | Runs the new image on a free port, runs the integration tests against it | An integration test fails |
+| 8 | Push Image | Pushes to Docker Hub (only if `PUSH_IMAGE` is ticked) | Login or push error |
+| 9 | Deploy (dev) | Runs the image on the Jenkins server on port **9080** (only if `DEPLOY` is ticked) | App does not answer |
+
+Set up:
+1. Jenkins server needs python3 + python3-venv, Docker and curl; add the Jenkins user to the docker group:
+   `sudo usermod -aG docker jenkins && sudo systemctl restart jenkins`
+2. Plugins: **Pipeline, Git, JUnit, Credentials Binding** (Pipeline Stage View is nice to have).
+3. New Item -> **Pipeline** -> *Pipeline script from SCM* -> Git repo URL, branch `*/main`, Script Path **`fast_api/Jenkinsfile`**.
+4. Only for Push Image: Manage Jenkins -> Credentials -> *Username with password*, ID **`dockerhub-creds`**
+   (Docker Hub username + an access token from Docker Hub -> Account settings -> Personal access tokens).
+
+Results: build page -> **Tests** (unit + integration), **Build Artifacts** (coverage report), and the app at
+`http://<jenkins-server-ip>:9080/`. Open port 9080 in the security group.
+If Jenkins itself runs inside Docker, change `TEST_HOST` in the `Jenkinsfile` to `host.docker.internal`.
+
+## If something fails
+
+| Problem | Fix |
+|---------|-----|
+| Ubuntu: `error: externally-managed-environment` | You ran `pip` outside the venv — run `source .venv/bin/activate` first |
+| Windows: `Activate.ps1 cannot be loaded` | Run `Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned -Force` |
+| Windows: `py` or `python` not found | Close and reopen PowerShell after installing Python |
+| `fastapi: command not found` | Activate the venv, then `pip install -r requirements.txt` |
+| `Address already in use` | Another app is on port 8000 — stop it (all four apps use 8000) |

@@ -1,0 +1,12 @@
+.venv
+__pycache__
+.pytest_cache
+.ruff_cache
+tests
+reports
+htmlcov
+.coverage
+Jenkinsfile
+README.md
+requirements-dev.txt
+pyproject.toml
