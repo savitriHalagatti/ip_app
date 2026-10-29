@@ -1,0 +1,25 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node.js
+node_modules/
+npm-debug.log
+
+# Go
+golang/ip-app
+golang/ip-app.exe
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Test and coverage output
+reports/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
