@@ -1,0 +1,169 @@
+// CI/CD pipeline for the Go app (ip_app/golang)
+//
+// Stages: Checkout -> Install -> Lint -> Unit Test -> Security Scan -> Build Image
+//         -> Container Test -> Push Image (optional) -> Deploy (dev)
+//
+// Jenkins job: Pipeline script from SCM, Script Path = golang/Jenkinsfile
+// Jenkins agent needs: Go (in /usr/local/go/bin), docker (jenkins user in the docker group), curl
+// Credentials (only for Push Image): dockerhub-creds = Docker Hub username + access token
+
+pipeline {
+    agent any
+
+    parameters {
+        booleanParam(name: 'PUSH_IMAGE', defaultValue: false, description: 'Push the image to Docker Hub (needs dockerhub-creds)')
+        booleanParam(name: 'DEPLOY', defaultValue: true, description: 'Run the new image on this Jenkins agent (dev)')
+    }
+
+    environment {
+        APP_DIR     = 'golang'
+        IMAGE       = 'golang-ip-app'           // same name as in docker-compose.yml
+        TAG         = "${env.BUILD_NUMBER}"
+        DEPLOY_PORT = '9083'                    // dev app: http://<jenkins-agent-ip>:9083/
+        TEST_HOST   = 'localhost'               // if Jenkins itself runs in Docker: host.docker.internal
+        PATH        = "/usr/local/go/bin:${env.PATH}"
+        JUNIT       = 'github.com/jstemmer/go-junit-report/v2@v2.1.0'
+        GOVULNCHECK = 'golang.org/x/vuln/cmd/govulncheck@v1.9.0'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        disableConcurrentBuilds()
+        timeout(time: 30, unit: 'MINUTES')
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh 'go version && go mod download && go mod verify'
+                }
+            }
+        }
+
+        stage('Lint') {
+            steps {
+                dir(env.APP_DIR) {
+                    // gofmt -l lists badly formatted files (must be none); go vet finds common mistakes
+                    sh '''
+                        UNFORMATTED=$(gofmt -l .)
+                        if [ -n "$UNFORMATTED" ]; then echo "Run gofmt on: $UNFORMATTED"; exit 1; fi
+                        go vet ./...
+                        go vet -tags=integration ./...
+                    '''
+                }
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                dir(env.APP_DIR) {
+                    // fails if a test fails or coverage is below 80%
+                    sh '''
+                        mkdir -p reports
+                        go test -v -coverprofile=reports/coverage.out ./... 2>&1 | tee reports/unit-tests.txt
+                        go run $JUNIT -in reports/unit-tests.txt -out reports/unit-tests.xml -set-exit-code
+                        go tool cover -html=reports/coverage.out -o reports/coverage.html
+                        COVERAGE=$(go tool cover -func=reports/coverage.out | awk '/^total:/ {print int($3)}')
+                        echo "Total coverage: $COVERAGE%"
+                        [ "$COVERAGE" -ge 80 ] || { echo "Coverage $COVERAGE% is below 80%"; exit 1; }
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit "${env.APP_DIR}/reports/unit-tests.xml"
+                    archiveArtifacts artifacts: "${env.APP_DIR}/reports/coverage.html", allowEmptyArchive: true
+                }
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                dir(env.APP_DIR) {
+                    // fails if an imported package (Go library or standard library) has a known vulnerability.
+                    // -scan package and GOFLAGS=-p=1 keep memory low enough for a 1 GB server (t3.micro);
+                    // on a bigger server, drop -scan package for the default, more precise symbol scan.
+                    sh '''
+                        GOFLAGS=-p=1 go install $GOVULNCHECK
+                        $(go env GOPATH)/bin/govulncheck -scan package ./...
+                    '''
+                }
+            }
+        }
+
+        stage('Build Image') {
+            steps {
+                dir(env.APP_DIR) {
+                    sh 'docker build -t $IMAGE:$TAG -t $IMAGE:latest .'
+                }
+            }
+        }
+
+        stage('Container Test') {
+            steps {
+                dir(env.APP_DIR) {
+                    // run the new image on a free port and test it over HTTP
+                    sh '''
+                        docker rm -f $IMAGE-test 2>/dev/null || true
+                        docker run -d --name $IMAGE-test -p 8000 $IMAGE:$TAG
+                        PORT=$(docker port $IMAGE-test 8000/tcp | head -1 | sed 's/.*://')
+                        for i in $(seq 1 30); do curl -sf http://$TEST_HOST:$PORT/greet > /dev/null && break; sleep 1; done
+                        BASE_URL=http://$TEST_HOST:$PORT go test -tags=integration -run Live -v ./... 2>&1 | tee reports/integration-tests.txt
+                        go run $JUNIT -in reports/integration-tests.txt -out reports/integration-tests.xml -set-exit-code
+                    '''
+                }
+            }
+            post {
+                always {
+                    junit "${env.APP_DIR}/reports/integration-tests.xml"
+                    sh 'docker rm -f $IMAGE-test || true'
+                }
+            }
+        }
+
+        stage('Push Image') {
+            when { expression { params.PUSH_IMAGE } }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'dockerhub-creds',
+                        usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        docker tag $IMAGE:$TAG $DOCKER_USER/$IMAGE:$TAG
+                        docker tag $IMAGE:$TAG $DOCKER_USER/$IMAGE:latest
+                        docker push $DOCKER_USER/$IMAGE:$TAG
+                        docker push $DOCKER_USER/$IMAGE:latest
+                        docker logout
+                    '''
+                }
+            }
+        }
+
+        stage('Deploy (dev)') {
+            when { expression { params.DEPLOY } }
+            steps {
+                sh '''
+                    docker rm -f $IMAGE-dev 2>/dev/null || true
+                    docker run -d --name $IMAGE-dev --restart unless-stopped -p $DEPLOY_PORT:8000 $IMAGE:$TAG
+                    for i in $(seq 1 30); do curl -sf http://$TEST_HOST:$DEPLOY_PORT/greet > /dev/null && break; sleep 1; done
+                    curl -sf http://$TEST_HOST:$DEPLOY_PORT/greet
+                '''
+            }
+        }
+    }
+
+    post {
+        success {
+            echo "Image ${env.IMAGE}:${env.TAG} passed all checks. Dev app: http://<jenkins-agent-ip>:${env.DEPLOY_PORT}/"
+        }
+        always {
+            sh 'docker image prune -f || true'
+        }
+    }
+}
